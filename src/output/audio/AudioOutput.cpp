@@ -617,6 +617,9 @@ bool AudioOutput::waitForNextBuffer() // parameter bool wait: if no wait and no 
     //don't return even if we can add buffer because we don't know when a buffer is processed and we have /to update dequeue index
     // openal need enqueue to a dequeued buffer! why sl crash
     bool no_wait = false;//d.canAddBuffer();
+    if(!d.backend)
+        return false;
+
     const AudioOutputBackend::BufferControl f = d.backend->bufferControl();
     int remove = 0;
     const AudioOutputPrivate::FrameInfo &fi(d.frame_infos.front());
