@@ -708,13 +708,6 @@ void VideoDecoderVAAPIPrivate::close()
 
 bool VideoDecoderVAAPIPrivate::getBuffer(void **opaque, uint8_t **data)
 {
-    static QFile *file = Q_NULLPTR;
-    if(!file)
-    {
-        file = new QFile("/home/bardia/test");
-        file->open(QFile::WriteOnly);
-    }
-
     VASurfaceID id = (VASurfaceID)(quintptr)*data;
     // id is always 0?
     surface_ptr sur;
