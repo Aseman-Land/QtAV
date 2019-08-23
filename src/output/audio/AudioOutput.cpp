@@ -19,6 +19,7 @@
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 ******************************************************************************/
 
+#include <QPointer>
 #include "QtAV/AudioOutput.h"
 #include "QtAV/private/AVOutput_p.h"
 #include "QtAV/private/AudioOutputBackend.h"
@@ -190,7 +191,7 @@ public:
     QElapsedTimer timer;
 #endif
     scale_samples_func scale_samples;
-    AudioOutputBackend *backend;
+    QPointer<AudioOutputBackend> backend;
     bool update_backend;
     QStringList backends;
 //private:
