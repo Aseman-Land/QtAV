@@ -27,6 +27,7 @@
 #include <QtCore/QMetaEnum>
 #include <QtCore/QStringList>
 #include <QtCore/QThread>
+#include <QDebug>
 extern "C" {
 #include <libavcodec/vaapi.h>
 }
@@ -34,6 +35,8 @@ extern "C" {
 #include "QtAV/private/factory.h"
 #include "vaapi/SurfaceInteropVAAPI.h"
 #include "utils/Logger.h"
+
+#include <QFile>
 
 #define VERSION_CHK(major, minor, patch) \
     (((major&0xff)<<16) | ((minor&0xff)<<8) | (patch&0xff))
@@ -247,7 +250,7 @@ public:
 
     int nb_surfaces;
     QVector<VASurfaceID> surfaces;
-    std::list<surface_ptr> surfaces_free, surfaces_used;
+    QList<surface_ptr> surfaces_free, surfaces_used;
     VAImage image;
     bool disable_derive;
     bool supports_derive;
@@ -336,17 +339,16 @@ VideoFrame VideoDecoderVAAPI::frame()
 #ifndef QT_NO_OPENGL
     if (copyMode() == ZeroCopy) {
         surface_ptr p;
-        std::list<surface_ptr>::iterator it = d.surfaces_used.begin();
-        for (; it != d.surfaces_used.end() && !p; ++it) {
-            if((*it)->get() == surface_id) {
-                p = *it;
+        for (surface_ptr s: d.surfaces_used) {
+            if(s->get() == surface_id) {
+                p = s;
                 break;
             }
         }
         if (!p) {
-            for (it = d.surfaces_free.begin(); it != d.surfaces_free.end() && !p; ++it) {
-                if((*it)->get() == surface_id) {
-                    p = *it;
+            for (surface_ptr s: d.surfaces_free) {
+                if(s->get() == surface_id) {
+                    p = s;
                     break;
                 }
             }
@@ -708,23 +710,23 @@ bool VideoDecoderVAAPIPrivate::getBuffer(void **opaque, uint8_t **data)
 {
     VASurfaceID id = (VASurfaceID)(quintptr)*data;
     // id is always 0?
-    std::list<surface_ptr>::iterator it = surfaces_free.begin();
+    surface_ptr sur;
     if (id && id != VA_INVALID_ID) {
-        bool found = false;
-        for (; it != surfaces_free.end(); ++it) { //?
-            if ((*it)->get() == id) {
-                found = true;
+        for (surface_ptr s: surfaces_free) {
+            if (s->get() == id) {
+                sur = s;
                 break;
             }
         }
-        if (!found) {
+        if (!sur) {
             qWarning("surface not found!!!!!!!!!!!!!");
             return false;
         }
     } else {
-        for (; it != surfaces_free.end() && it->count() > 1; ++it) {}
-        if (it == surfaces_free.end()) {
-            if (!surfaces_free.empty())
+        if (surfaces_free.count())
+            sur = surfaces_free.first();
+        if (!sur) {
+            if (!surfaces_free.isEmpty())
                 qWarning("VAAPI - renderer still using all freed up surfaces by decoder. unable to find free surface, trying to allocate a new one");
 
             const int kMaxSurfaces = 32;
@@ -735,21 +737,30 @@ bool VideoDecoderVAAPIPrivate::getBuffer(void **opaque, uint8_t **data)
             const int old_size = surfaces.size();
             if (!ensureSurfaces(old_size + 1, surface_width, surface_height, false)) {
                 // destroy the new created surface. Surfaces can only be destroyed after the context associated has been destroyed?
-                VAWARN(vaDestroySurfaces(display->get(), surfaces.data() + old_size, 1));
+                VADisplay _dpy = display? display->get() : Q_NULLPTR;
+                VASurfaceID *_surfaces = surfaces.data() + old_size;
+                VAWARN(vaDestroySurfaces(_dpy, _surfaces, 1));
                 surfaces.resize(old_size);
             }
-            it = surfaces_free.end();
-            --it;
+            if (surfaces_free.count())
+                sur = surfaces_free.last();
         }
     }
-    id =(*it)->get();
-    surface_t *s = it->get();
-    // !erase later. otherwise it may be destroyed
-    surfaces_used.push_back(*it);
-    // TODO: why QList may erase an invalid iterator(first iterator)at the same position?
-    surfaces_free.erase(it); //ref not increased, but can not be used.
-    *data = (uint8_t*)(quintptr)id;
-    *opaque = s;
+    if (!sur.isNull()) {
+        id = sur->get();
+        surface_t *s = sur.get();
+        // !erase later. otherwise it may be destroyed
+        surfaces_used << sur;
+        // TODO: why QList may erase an invalid iterator(first iterator)at the same position?
+        for (qint32 i=0; i<surfaces_free.count(); i++)
+            if (surfaces_free.at(i)->get() == sur->get())
+            {
+                surfaces_free.removeAt(i);
+                i--;
+            }
+        *data = (uint8_t*)(quintptr)id;
+        *opaque = s;
+    }
     return true;
 }
 
@@ -757,13 +768,13 @@ void VideoDecoderVAAPIPrivate::releaseBuffer(void *opaque, uint8_t *data)
 {
     Q_UNUSED(opaque);
     VASurfaceID id = (VASurfaceID)(uintptr_t)data;
-    for (std::list<surface_ptr>::iterator it = surfaces_used.begin(); it != surfaces_used.end(); ++it) {
-        if((*it)->get() == id) {
-            surfaces_free.push_back(*it);
-            surfaces_used.erase(it);
-            break;
+    for (qint32 i=0; i<surfaces_used.count(); i++)
+        if (surfaces_used.at(i)->get() == id)
+        {
+            surfaces_free << surfaces_used.at(i);
+            surfaces_used.removeAt(i);
+            i--;
         }
-    }
 }
 
 } // namespace QtAV

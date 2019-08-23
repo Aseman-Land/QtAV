@@ -24,6 +24,7 @@
 #include "QtAV/private/AVOutput_p.h"
 #include "QtAV/private/AudioOutputBackend.h"
 #include "QtAV/private/AVCompat.h"
+#include <QPointer>
 #if QT_VERSION >= QT_VERSION_CHECK(4, 7, 0)
 #include <QtCore/QElapsedTimer>
 #else

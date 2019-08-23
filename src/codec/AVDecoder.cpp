@@ -134,7 +134,7 @@ bool AVDecoder::close()
     d.close();
     // TODO: reset config?
     if (d.codec_ctx) {
-        AV_ENSURE_OK(avcodec_close(d.codec_ctx), false);
+//        AV_ENSURE_OK(avcodec_close(d.codec_ctx), false);
     }
     return true;
 }
