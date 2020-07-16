@@ -112,8 +112,9 @@ AVPlayer::Private::Private(AVPlayer *player)
     , status(NoMedia)
     , state(AVPlayer::StoppedState)
     , end_action(MediaEndAction_Default)
+    , last_known_good_pts(0)
+    , was_stepping(false)
     ,q(player)
-    , adaptive_buffer(false)
 {
     demuxer.setInterruptTimeout(interrupt_timeout);
     /*
@@ -123,41 +124,6 @@ AVPlayer::Private::Private(AVPlayer *player)
      */
 
     mediaDataTimer.setInterval(1000);
-
-    connect(&autoPlay_timer,&QTimer::timeout,[this](){
-        if(autoPlayMode=="check" || autoPlayMode=="timeout") {
-            if(demuxer.isReceiving.load()) {
-                demuxer.isReceiving.store(false);
-                autoPlayMode="check";
-            }
-            else {
-                if(autoPlayMode=="check" &&
-                   q->state()!=PausedState &&
-                   q->file()!="") {
-                    autoPlayElapsedTimer.start();
-                    autoPlayMode="timeout";
-                }
-                else if(autoPlayMode=="timeout") {
-                    if(autoPlayElapsedTimer.elapsed()>=disconnectTimeout) {
-                        autoPlayMode = "stop";
-                        q->stop();
-                        autoPlayMode = "reconnect";
-                    }
-                }
-            }
-        }
-        else if(autoPlayMode=="reconnect") {
-            q->play();
-            if(autoPlay_timer.interval()!=autoPlayInterval)
-                autoPlay_timer.setInterval(autoPlayInterval);
-        }
-    });
-    connect(player,&AVPlayer::loaded,[this](){
-        autoPlayMode = "check";
-        autoPlay_timer.setInterval(autoPlayCheckInterval);
-        if(autoPlay)
-            autoPlay_timer.start();
-    });
 
     vc_ids
 #if QTAV_HAVE(DXVA)
@@ -313,7 +279,9 @@ void AVPlayer::Private::initCommonStatistics(int s, Statistics::Common *st, AVCo
 #if (defined FF_API_R_FRAME_RATE && FF_API_R_FRAME_RATE) //removed in libav10
     //FIXME: which 1 should we choose? avg_frame_rate may be nan, r_frame_rate may be wrong(guessed value)
     else if (stream->r_frame_rate.den && stream->r_frame_rate.num) {
-        st->frame_rate = av_q2d(stream->r_frame_rate);
+        if (stream->r_frame_rate.num < 90000)
+            st->frame_rate = av_q2d(stream->r_frame_rate);
+
         qDebug("%d/%d", stream->r_frame_rate.num, stream->r_frame_rate.den);
     }
 #endif //FF_API_R_FRAME_RATE
@@ -696,52 +664,30 @@ void AVPlayer::Private::updateBufferValue()
         updateBufferValue(vthread->packetQueue());
 }
 
-void AVPlayer::Private::applyAdaptiveBuffer()
-{
-    disconnect(&adaptiveBuffer_timer,SIGNAL(timeout()),q,SLOT(updateAdaptiveBuffer()));
-    disconnect(q,SIGNAL(started()),&adaptiveBuffer_timer,SLOT(start()));
-    disconnect(q,SIGNAL(stopped()),&adaptiveBuffer_timer,SLOT(stop()));
-    if(adaptive_buffer)
-    {
-        //buffer_mode = BufferTime;
-        adaptiveBuffer_timer.setInterval(30);
-        q->setBufferValue(5);
-        connect(&adaptiveBuffer_timer,SIGNAL(timeout()),q,SLOT(updateAdaptiveBuffer()));
-        connect(q,SIGNAL(started()),&adaptiveBuffer_timer,SLOT(start()));
-        connect(q,SIGNAL(stopped()),&adaptiveBuffer_timer,SLOT(stop()));
-    }
-}
-
-void AVPlayer::Private::applyAutoPlay(bool autoPlay)
-{
-    if(autoPlay) {
-        autoPlay_timer.setInterval(autoPlayCheckInterval);
-        autoPlay_timer.start();
-    }
-    else
-        autoPlay_timer.stop();
-}
-
 bool AVPlayer::Private::calcRates()
 {
     if(!elapsedTimer.isValid())
     {
         elapsedTimer.start();
-        demuxer.lock.lockForRead();
+        demuxer.mutex.lock();
         lastTotalBandwidth = demuxer.totalBandwidth;
         lastTotalVideoBandwidth = demuxer.totalVideoBandwidth;
         lastTotalAudioBandwidth = demuxer.totalAudioBandwidth;
-        demuxer.lock.unlock();
-        statistics.lock.lockForRead();
+        demuxer.mutex.unlock();
+        statistics.mutex.lock();
         lastTotalFrames = statistics.totalFrames;
-        statistics.lock.unlock();
+        statistics.mutex.unlock();
         return false;
     }
 
     auto elapsed = elapsedTimer.elapsed();
-    elapsedTimer.start();
+    if(elapsed>(mediaDataTimer.interval()/2))
+        elapsedTimer.start();
+    else
+        return false;
 
-    demuxer.lock.lockForRead();
+
+    demuxer.mutex.lock();
     statistics.bandwidthRate = (static_cast<double>(demuxer.totalBandwidth-lastTotalBandwidth)/elapsed)*1000;
     lastTotalBandwidth = demuxer.totalBandwidth;
 
@@ -750,12 +696,12 @@ bool AVPlayer::Private::calcRates()
 
     statistics.audioBandwidthRate = (static_cast<double>(demuxer.totalAudioBandwidth-lastTotalAudioBandwidth)/elapsed)*1000;
     lastTotalAudioBandwidth = demuxer.totalAudioBandwidth;
-    demuxer.lock.unlock();
+    demuxer.mutex.unlock();
 
-    statistics.lock.lockForRead();
+    statistics.mutex.lock();
     statistics.fps = (static_cast<double>(statistics.totalFrames-lastTotalFrames)/elapsed)*1000;
     lastTotalFrames = statistics.totalFrames;
-    statistics.lock.unlock();
+    statistics.mutex.unlock();
 
     return true;
 }
@@ -795,23 +741,25 @@ void AVPlayer::Private::initMediaData()
 
 void AVPlayer::Private::updateMediaData()
 {
-    if(!mediaData["connected"].toBool()) {
-        mediaData["connected"] = true;
-        if(QUrl::fromUserInput(q->file()).isLocalFile())
-            mediaData["protocol"] = "File";
-        else
-            mediaData["protocol"] = q->file().mid(0,q->file().indexOf(":")).toUpper();
-        mediaData["decoder"] = statistics.video.decoder;
-        mediaData["decoderDetails"] = statistics.video.decoder_detail;
-        demuxer.lock.lockForRead();
-        mediaData["containerFormat"] = demuxer.containerFormat;
-        demuxer.lock.unlock();
-    }
+    mediaData["connected"] = true;
+    if(QUrl::fromUserInput(q->file()).isLocalFile())
+        mediaData["protocol"] = "File";
+    else
+        mediaData["protocol"] = q->file().mid(0,q->file().indexOf(":")).toUpper();
+    mediaData["decoder"] = statistics.video.decoder;
+    mediaData["decoderDetails"] = statistics.video.decoder_detail;
+    demuxer.mutex.lock();
+    mediaData["containerFormat"] = demuxer.containerFormat;
+    demuxer.mutex.unlock();
+    statistics.mutex.lock();
+    mediaData["realResolution"] = statistics.realResolution;
+    mediaData["imageBufferSize"] = statistics.imageBufferSize;
+    statistics.mutex.unlock();
 
     if(!calcRates())
         return;
 
-    statistics.lock.lockForRead();
+    statistics.mutex.lock();
     mediaData["bandwidthRate"] = statistics.bandwidthRate;
     mediaData["videoBandwidthRate"] = statistics.videoBandwidthRate;
     mediaData["audioBandwidthRate"] = statistics.audioBandwidthRate;
@@ -822,9 +770,9 @@ void AVPlayer::Private::updateMediaData()
     mediaData["droppedFrames"] = statistics.droppedFrames;
     mediaData["totalKeyFrames"] = statistics.totalKeyFrames;
     mediaData["imageBufferSize"] = statistics.imageBufferSize;
-    statistics.lock.unlock();
+    statistics.mutex.unlock();
 
-    demuxer.lock.lockForRead();
+    demuxer.mutex.lock();
     mediaData["totalBandwidth"] = demuxer.totalBandwidth;
     mediaData["totalVideoBandwidth"] = demuxer.totalVideoBandwidth;
     mediaData["totalAudioBandwidth"] = demuxer.totalAudioBandwidth;
@@ -834,7 +782,7 @@ void AVPlayer::Private::updateMediaData()
     mediaData["totalVideoPackets"] = demuxer.totalVideoPackets;
     mediaData["totalAudioPackets"] = demuxer.totalAudioPackets;
     mediaData["lostFrames"] = demuxer.lostFrames;
-    demuxer.lock.unlock();
+    demuxer.mutex.unlock();
 
     auto totalElapsed = totalElapsedTimer.elapsed();
     if(totalElapsed>0)
@@ -871,10 +819,6 @@ void AVPlayer::Private::applyMediaDataCalculation()
         lastTotalAudioBandwidth = 0;
         lastTotalFrames = 0;
         mediaData["connected"] = true;
-        statistics.lock.lockForRead();
-        mediaData["realResolution"] = statistics.realResolution;
-        mediaData["imageBufferSize"] = statistics.imageBufferSize;
-        statistics.lock.unlock();
         elapsedTimer.invalidate();
         totalElapsedTimer.start();
         mediaDataTimer.start();

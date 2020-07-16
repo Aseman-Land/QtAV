@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
     QtAV:  Multimedia framework based on Qt and FFmpeg
     Copyright (C) 2012-2017 Wang Bin <wbsecg1@gmail.com>
 
@@ -45,7 +45,6 @@ QmlAVPlayer::QmlAVPlayer(QObject *parent) :
   , mUseWallclockAsTimestamps(false)
   , m_complete(false)
   , m_mute(false)
-  , mAutoPlay(false)
   , mAutoLoad(false)
   , mHasAudio(false)
   , mHasVideo(false)
@@ -89,6 +88,7 @@ void QmlAVPlayer::classBegin()
     connect(mpPlayer, SIGNAL(seekableChanged()), SIGNAL(seekableChanged()));
     connect(mpPlayer, SIGNAL(seekFinished(qint64)), this, SIGNAL(seekFinished()), Qt::DirectConnection);
     connect(mpPlayer, SIGNAL(bufferProgressChanged(qreal)), SIGNAL(bufferProgressChanged()));
+    connect(mpPlayer, SIGNAL(notifyIntervalChanged()), this,SIGNAL(notifyIntervalChanged()));
     connect(this, SIGNAL(channelLayoutChanged()), SLOT(applyChannelLayout()));
     // direct connection to ensure volume() in slots is correct
     connect(mpPlayer->audio(), SIGNAL(volumeChanged(qreal)), SLOT(applyVolume()), Qt::DirectConnection);
@@ -104,16 +104,19 @@ void QmlAVPlayer::classBegin()
 void QmlAVPlayer::componentComplete()
 {
     // TODO: set player parameters
-    if (mSource.isValid() && (mAutoLoad || mAutoPlay)) {
+    if (mSource.isValid() && mAutoLoad) {
 //        if (mAutoLoad)
 //            mpPlayer->load();
-//        if (mAutoPlay)
-            mpPlayer->play();
+        mpPlayer->play();
     }
 
     connect(mpPlayer, &QtAV::AVPlayer::mediaDataTimerTriggered, this, &QmlAVPlayer::mediaDataTimerTriggered);
     connect(mpPlayer, &QtAV::AVPlayer::mediaDataTimerStarted, this, &QmlAVPlayer::mediaDataTimerStarted);
-    connect(mpPlayer, &QtAV::AVPlayer::displayFrameRateChanged, this, &QmlAVPlayer::displayFrameRateChanged);
+    connect(mpPlayer, &QtAV::AVPlayer::receivingFramesChanged, this, &QmlAVPlayer::receivingFramesChanged);
+    connect(mpPlayer, &QtAV::AVPlayer::recordFinished, this, &QmlAVPlayer::recordFinished);
+
+    mIODevice.setBuffer(&mSourceBytes);
+    mIODevice.open(QIODevice::ReadOnly);
 
     m_complete = true;
 }
@@ -135,6 +138,11 @@ bool QmlAVPlayer::hasVideo() const
 QUrl QmlAVPlayer::source() const
 {
     return mSource;
+}
+
+QByteArray QmlAVPlayer::sourceBytes() const
+{
+    return mSourceBytes;
 }
 
 void QmlAVPlayer::setSource(const QUrl &url)
@@ -162,7 +170,7 @@ void QmlAVPlayer::setSource(const QUrl &url)
     }
 
     // TODO: in componentComplete()?
-    if (m_complete && (mAutoLoad || mAutoPlay)) {
+    if (m_complete && mAutoLoad) {
         mError = NoError;
         mErrorString = tr("No error");
         Q_EMIT error(mError, mErrorString);
@@ -170,7 +178,46 @@ void QmlAVPlayer::setSource(const QUrl &url)
         stop(); // TODO: no stop for autoLoad?
 //        if (mAutoLoad)
 //            mpPlayer->load();
-        if (mAutoPlay || mAutoLoad) {
+        if (mAutoLoad) {
+            //mPlaybackState is actually changed in slots. But if set to a new source the state may not change before call play()
+            mPlaybackState = StoppedState;
+            play();
+        }
+    }
+}
+
+void QmlAVPlayer::setSourceBytes(const QByteArray &bytes)
+{
+    if (mSourceBytes == bytes)
+        return;
+    if(mIODevice.isOpen())
+        mIODevice.close();
+    mSourceBytes = bytes;
+    mIODevice.open(QIODevice::ReadOnly);
+    mIODevice.reset();
+    mpPlayer->setIODevice(mSourceBytes.isEmpty() ? nullptr :&mIODevice);
+
+    Q_EMIT sourceBytesChanged(); //TODO: Q_EMIT only when player loaded a new source
+
+    if (mHasAudio) {
+        mHasAudio = false;
+        Q_EMIT hasAudioChanged();
+    }
+    if (mHasVideo) {
+        mHasVideo = false;
+        Q_EMIT hasVideoChanged();
+    }
+
+    // TODO: in componentComplete()?
+    if (m_complete && mAutoLoad) {
+        mError = NoError;
+        mErrorString = tr("No error");
+        Q_EMIT error(mError, mErrorString);
+        Q_EMIT errorChanged();
+        stop(); // TODO: no stop for autoLoad?
+//        if (mAutoLoad)
+//            mpPlayer->load();
+        if (mAutoLoad) {
             //mPlaybackState is actually changed in slots. But if set to a new source the state may not change before call play()
             mPlaybackState = StoppedState;
             play();
@@ -190,22 +237,6 @@ void QmlAVPlayer::setAutoLoad(bool autoLoad)
 
     mAutoLoad = autoLoad;
     Q_EMIT autoLoadChanged();
-}
-
-bool QmlAVPlayer::autoPlay() const
-{
-    return mAutoPlay;
-}
-
-void QmlAVPlayer::setAutoPlay(bool autoplay)
-{
-    if (mAutoPlay == autoplay)
-        return;
-
-    mAutoPlay = autoplay;
-    if (mpPlayer)
-        mpPlayer->setAutoPlay(autoplay);
-    Q_EMIT autoPlayChanged();
 }
 
 MediaMetaData* QmlAVPlayer::metaData() const
@@ -465,21 +496,6 @@ void QmlAVPlayer::setFrameRate(qreal value)
     }
 }
 
-int QmlAVPlayer::adaptiveBuffer() const
-{
-    return mpPlayer->adaptiveBuffer();
-}
-
-void QmlAVPlayer::setAdaptiveBuffer(bool value)
-{
-    if (mpPlayer->adaptiveBuffer() == value)
-        return;
-    if (mpPlayer) {
-        mpPlayer->setAdaptiveBuffer(value);
-        Q_EMIT adaptiveBufferChanged();
-    }
-}
-
 QVariantMap QmlAVPlayer::mediaData() const
 {
     return mpPlayer->mediaData();
@@ -515,24 +531,25 @@ void QmlAVPlayer::setDisconnectTimeout(int value)
     }
 }
 
-int QmlAVPlayer::autoPlayInterval() const
+bool QmlAVPlayer::receivingFrames() const
 {
-    return mpPlayer->autoPlayInterval();
+    return mpPlayer->receivingFrames();
 }
 
-void QmlAVPlayer::setAutoPlayInterval(int value)
+QmlAVPlayer::MediaEndAction QmlAVPlayer::mediaEndAction() const
 {
-    if (mpPlayer->autoPlayInterval() == value)
+    return  static_cast<MediaEndAction>(int(mpPlayer->mediaEndAction()));
+}
+
+void QmlAVPlayer::setMediaEndAction(QmlAVPlayer::MediaEndAction value)
+{
+    QtAV::MediaEndAction action = static_cast<QtAV::MediaEndAction>(value);
+    if (mpPlayer->mediaEndAction() == action)
         return;
     if (mpPlayer) {
-        mpPlayer->setAutoPlayInterval(value);
-        Q_EMIT autoPlayIntervalChanged();
+        mpPlayer->setMediaEndAction(action);
+        Q_EMIT mediaEndActionChanged();
     }
-}
-
-double QmlAVPlayer::displayFrameRate() const
-{
-    return mpPlayer->displayFrameRate();
 }
 
 bool QmlAVPlayer::startRecording(QString filePath, int duration)
@@ -682,6 +699,13 @@ void QmlAVPlayer::setAudioBackends(const QStringList &value)
         return;
     m_ao = value;
     Q_EMIT audioBackendsChanged();
+}
+
+int QmlAVPlayer::notifyInterval() const
+{
+    if(!mpPlayer)
+        return -1;
+    return mpPlayer->notifyInterval();
 }
 
 QStringList QmlAVPlayer::supportedAudioBackends() const
@@ -928,15 +952,14 @@ void QmlAVPlayer::play(const QUrl &url)
     if (mSource == url && (playbackState() != StoppedState || m_loading))
         return;
     setSource(url);
-    if (!autoPlay())
-        play();
+    play();
 }
 
 void QmlAVPlayer::play()
 {
     // if not autoPlay, maybe a different source was set and play() was not called
-    if (isAutoLoad() && (playbackState() == PlayingState || m_loading))
-        return;
+//    if (isAutoLoad() && (playbackState() == PlayingState || m_loading))
+//        return;
     setPlaybackState(PlayingState);
 }
 
@@ -988,18 +1011,29 @@ void QmlAVPlayer::seekBackward()
     mpPlayer->seekBackward();
 }
 
+void QmlAVPlayer::setNotifyInterval(int notifyInterval)
+{
+    if (!mpPlayer)
+        return;
+    mpPlayer->setNotifyInterval(notifyInterval);
+}
+
 void QmlAVPlayer::_q_error(const AVError &e, int ffmpegError, const QString& ffmpegErrorStr)
 {
-    mError = NoError;
-    mErrorString = e.string();
-    mffmpegError = ffmpegError;
-    mffmpegErrorStr = ffmpegErrorStr;
+    if(mffmpegError!=ffmpegError) {
+        mffmpegError = ffmpegError;
+        mffmpegErrorStr = ffmpegErrorStr;
+        Q_EMIT ffmpegErrorChanged();
+    }
     const AVError::ErrorCode ec = e.error();
-    mError = static_cast<Error>(ec);
-    if (ec != AVError::NoError)
-        m_loading = false;
-    Q_EMIT error(mError, mErrorString, mffmpegError, mffmpegErrorStr);
-    Q_EMIT errorChanged();
+    if(mErrorString !=e.string() || mError != static_cast<Error>(ec)) {
+        mErrorString = e.string();
+        mError = static_cast<Error>(ec);
+        if (ec != AVError::NoError)
+            m_loading = false;
+        Q_EMIT error(mError, mErrorString, mffmpegError, mffmpegErrorStr);
+        Q_EMIT errorChanged();
+    }
 }
 
 void QmlAVPlayer::_q_statusChanged()

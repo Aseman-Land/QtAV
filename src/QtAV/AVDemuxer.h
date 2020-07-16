@@ -27,7 +27,7 @@
 #include <QtCore/QVariant>
 #include <QtCore/QObject>
 #include <QtCore/QScopedPointer>
-#include <QReadWriteLock>
+#include <QMutex>
 
 struct AVFormatContext;
 struct AVCodecContext;
@@ -38,7 +38,7 @@ QT_END_NAMESPACE
 namespace QtAV {
 class AVError;
 class MediaIO;
-class Q_AV_EXPORT AVDemuxer : public QObject
+class  AVDemuxer : public QObject
 {
     Q_OBJECT
 public:
@@ -198,6 +198,7 @@ Q_SIGNALS:
     void error(const QtAV::AVError& e, int ffmpegError = 0, const QString& ffmpegErrorStr=""); //explictly use QtAV::AVError in connection for Qt4 syntax
     void mediaStatusChanged(QtAV::MediaStatus status);
     void seekableChanged();
+    void recordFinished(bool success, const QString& format);
 private:
     void setMediaStatus(MediaStatus status);
     // error code (errorCode) and message (msg) may be modified internally
@@ -223,9 +224,8 @@ public:
     qint64 lostFrames = 0;
     int audioStreamIndex = -1;
     QString containerFormat;
-    QReadWriteLock lock;
+    QMutex mutex;
     std::atomic<bool> resetValues{true};
-    std::atomic<bool> isReceiving{false}; //for autoPlay
 };
 
 } //namespace QtAV

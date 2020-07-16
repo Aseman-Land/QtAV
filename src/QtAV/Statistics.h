@@ -27,14 +27,14 @@
 #include <QtCore/QTime>
 #include <QtCore/QSharedData>
 #include <QSize>
-#include <QReadWriteLock>
+#include <QMutex>
 
 /*!
  * values from functions are dynamically calculated
  */
 namespace QtAV {
 
-class Q_AV_EXPORT Statistics
+class  Statistics
 {
 public:
     Statistics();
@@ -67,7 +67,7 @@ public:
     } audio, video; //init them
 
     //from AVCodecContext
-    class Q_AV_EXPORT AudioOnly {
+    class  AudioOnly {
     public:
         AudioOnly();
         int sample_rate; ///< samples per second
@@ -86,7 +86,7 @@ public:
         int block_align;
     } audio_only;
     //from AVCodecContext
-    class Q_AV_EXPORT VideoOnly {
+    class  VideoOnly {
     public:
         //union member with ctor, dtor, copy ctor only works in c++11
         VideoOnly();
@@ -127,7 +127,7 @@ public:
     qint64 totalKeyFrames = -3;
     QSize realResolution = QSize(0,0);
     int imageBufferSize = 0;
-    QReadWriteLock lock;
+    QMutex mutex;
     std::atomic<bool> resetValues{true};
 };
 

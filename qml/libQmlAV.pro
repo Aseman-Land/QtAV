@@ -1,17 +1,21 @@
 TEMPLATE = lib
-CONFIG += qt plugin
+CONFIG += staticlib
+#CONFIG += qt plugin
 TARGET = QmlAV
 QT += quick qml
 CONFIG *= qmlav-buildlib
 #QMAKE_RPATHLINKDIR
 #CONFIG *= qml_module relative_qt_rpath
 
-include(../runSdkInstall.pri)
+#include(../runSdkInstall.pri)
 
 #var with '_' can not pass to pri?
 PROJECTROOT = $$PWD/..
 !include($$PROJECTROOT/src/libQtAV.pri): error("could not find libQtAV.pri")
-!include(libQmlAV.pri): error("could not find libQmlAV.pri")
+#!include(libQmlAV.pri): error("could not find libQmlAV.pri")
+include($${PROJECTROOT}/common.pri)
+INCLUDEPATH += $$PWD/QmlAV
+DEPENDPATH += $$PWD/QmlAV
 preparePaths($$OUT_PWD/../out)
 #https://github.com/wang-bin/QtAV/issues/368#issuecomment-73246253
 #http://qt-project.org/forums/viewthread/38438
@@ -39,9 +43,9 @@ if(equals(MAKEFILE_GENERATOR, MSVC.NET)|equals(MAKEFILE_GENERATOR, MSBUILD)) {
 } else {
   TRY_COPY = -$$QMAKE_COPY #makefile. or -\$\(COPY_FILE\)
 }
-for(f, plugin.files) {
-  plugin.commands += $$escape_expand(\\n\\t)$$TRY_COPY $$shell_path($$f) $$shell_path($$plugin.path)
-}
+#for(f, plugin.files) {
+#  plugin.commands += $$escape_expand(\\n\\t)$$TRY_COPY $$shell_path($$f) $$shell_path($$plugin.path)
+#}
 #join values separated by space. so quote is needed
 #plugin.commands = $$join(plugin.commands,$$escape_expand(\\n\\t))
 OTHER_FILES += $$qtav_qml.files
@@ -72,9 +76,9 @@ QMAKE_EXTRA_COMPILERS += extra_copy #
 EXTRA_COPY_FILES = $$qtav_qml.files
 
 QMAKE_WRITE_DEFAULT_RC = 1
-QMAKE_TARGET_COMPANY = "Shanghai University->S3 Graphics->Deepin | wbsecg1@gmail.com"
+QMAKE_TARGET_COMPANY = "wbsecg1@gmail.com"
 QMAKE_TARGET_DESCRIPTION = "QtAV QML module. QtAV Multimedia framework. http://qtav.org"
-QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2017 WangBin, wbsecg1@gmail.com"
+QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2019 WangBin, wbsecg1@gmail.com"
 QMAKE_TARGET_PRODUCT = "QtAV QML"
 
 SOURCES += \

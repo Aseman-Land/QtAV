@@ -59,7 +59,7 @@ class VideoCapture;
  *  player->play();
  * \endcode
  */
-class Q_AV_EXPORT AVPlayer : public QObject
+class  AVPlayer : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool relativeTimeMode READ relativeTimeMode WRITE setRelativeTimeMode NOTIFY relativeTimeModeChanged)
@@ -82,12 +82,10 @@ class Q_AV_EXPORT AVPlayer : public QObject
     Q_PROPERTY(State state READ state WRITE setState NOTIFY stateChanged)
     Q_PROPERTY(QtAV::MediaStatus mediaStatus READ mediaStatus NOTIFY mediaStatusChanged)
     Q_PROPERTY(QtAV::MediaEndAction mediaEndAction READ mediaEndAction WRITE setMediaEndAction NOTIFY mediaEndActionChanged)
-    Q_PROPERTY(bool adaptiveBuffer READ adaptiveBuffer WRITE setAdaptiveBuffer NOTIFY adaptiveBufferChanged)
     Q_PROPERTY(QVariantMap mediaData READ mediaData NOTIFY mediaDataTimerTriggered)
     Q_PROPERTY(int mediaDataTimerInterval READ mediaDataTimerInterval WRITE setMediaDataTimerInterval NOTIFY mediaDataTimerIntervalChanged)
     Q_PROPERTY(int disconnectTimeout READ disconnectTimeout WRITE setDisconnectTimeout NOTIFY disconnectTimeoutChanged)
-    Q_PROPERTY(double displayFrameRate READ displayFrameRate NOTIFY displayFrameRateChanged)
-    Q_PROPERTY(int autoPlayInterval READ autoPlayInterval WRITE setAutoPlayInterval NOTIFY autoPlayIntervalChanged)
+    Q_PROPERTY(bool receivingFrames READ receivingFrames NOTIFY receivingFramesChanged)
     Q_PROPERTY(unsigned int chapters READ chapters NOTIFY chaptersChanged)
     Q_ENUMS(State)
 public:
@@ -184,6 +182,7 @@ public:
      */
     qint64 stopPosition() const; //unit: ms
     qint64 position() const; //unit: ms
+    qint64 displayPosition() const;
     //0: play once. N: play N+1 times. <0: infinity
     int repeat() const; //or repeatMax()?
     /*!
@@ -417,15 +416,6 @@ public:
      */
     MediaEndAction mediaEndAction() const;
     void setMediaEndAction(MediaEndAction value);
-    /*!
-     * \brief adaptiveBuffer
-     * adaptive buffer size based on bit rate.
-     */
-    bool adaptiveBuffer() const;
-    void setAdaptiveBuffer(bool value);
-
-    int autoPlay() const;
-    void setAutoPlay(bool value);
 
     QVariantMap mediaData() const;
 
@@ -435,10 +425,7 @@ public:
     int disconnectTimeout() const;
     void setDisconnectTimeout(int value);
 
-    int autoPlayInterval() const;
-    void setAutoPlayInterval(int value);
-
-    double displayFrameRate() const;
+    bool receivingFrames() const;
 
     void resetMediaData();
 
@@ -582,14 +569,13 @@ Q_SIGNALS:
     void loaded(); // == mediaStatusChanged(QtAV::LoadedMedia)
     void mediaStatusChanged(QtAV::MediaStatus status); //explictly use QtAV::MediaStatus
     void mediaEndActionChanged(QtAV::MediaEndAction action);
-    void adaptiveBufferChanged(bool);
     void firstKeyFrameReceived();
     void mediaDataTimerTriggered(QVariantMap);
     void mediaDataTimerStarted();
     void mediaDataTimerIntervalChanged(int);
     void disconnectTimeoutChanged(int);
-    void autoPlayIntervalChanged(int);
-    void displayFrameRateChanged(double);
+    void receivingFramesChanged(bool);
+    void recordFinished(bool success, const QString& format);
     /*!
      * \brief durationChanged emit when media is loaded/unloaded
      */
@@ -616,6 +602,7 @@ Q_SIGNALS:
      * \param position The video or audio timestamp when seek is finished
      */
     void seekFinished(qint64 position);
+    void stepFinished();
     void positionChanged(qint64 position);
     void interruptTimeoutChanged();
     void interruptOnTimeoutChanged();
@@ -656,8 +643,8 @@ private Q_SLOTS:
     void onStarted();
     void updateMediaStatus(QtAV::MediaStatus status);
     void onSeekFinished(qint64 value);
+    void onStepFinished();
     void tryClearVideoRenderers();
-    void updateAdaptiveBuffer();
     void onMediaStatusChanged(QtAV::MediaStatus status);
     void seekChapter(int incr);
 protected:

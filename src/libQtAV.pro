@@ -1,7 +1,8 @@
 TEMPLATE = lib
+CONFIG += staticlib
 MODULE_INCNAME = QtAV # for mac framework. also used in install_sdk.pro
 TARGET = QtAV
-QT += core gui
+QT += core gui quick qml
 CONFIG += c++17
 #CONFIG *= ltcg
 greaterThan(QT_MAJOR_VERSION, 4) {
@@ -18,7 +19,7 @@ CONFIG *= qtav-buildlib
 static: CONFIG *= static_ffmpeg
 INCLUDEPATH += $$[QT_INSTALL_HEADERS] # TODO: ffmpeg dir
 
-include(../runSdkInstall.pri)
+#include(../runSdkInstall.pri)
 
 #mac: simd.prf will load qt_build_config and the result is soname will prefixed with QT_INSTALL_LIBS and link flag will append soname after QMAKE_LFLAGS_SONAME
 config_libcedarv: CONFIG *= neon config_simd #need by qt4 addSimdCompiler(). neon or config_neon is required because tests/arch can not detect neon
@@ -54,9 +55,9 @@ RESOURCES += QtAV.qrc \
 
 !rc_file {
     RC_ICONS = QtAV.ico
-    QMAKE_TARGET_COMPANY = "Shanghai University->S3 Graphics->Deepin | wbsecg1@gmail.com"
+    QMAKE_TARGET_COMPANY = "wbsecg1@gmail.com"
     QMAKE_TARGET_DESCRIPTION = "QtAV Multimedia framework. http://qtav.org"
-    QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2017 WangBin, wbsecg1@gmail.com"
+    QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2019 WangBin, wbsecg1@gmail.com"
     QMAKE_TARGET_PRODUCT = "QtAV"
 } else:win32 {
     RC_FILE = QtAV.rc
@@ -160,7 +161,6 @@ config_avdevice { #may depends on avfilter
         ios {
           LIBS += -framework AVFoundation
         } else {
-          LIBS += -framework QTKit
       # assume avdevice targets to the same version as Qt and always >= 10.6
          !isEqual(QMAKE_MACOSX_DEPLOYMENT_TARGET, 10.6): LIBS += -framework AVFoundation
         }
@@ -625,7 +625,7 @@ mac {
 
 unix:!mac:!cross_compile {
 icon.files = $$PWD/$${TARGET}.svg
-icon.path = /usr/share/icons/hicolor/scalable/apps
+icon.path = $$[QT_INSTALL_PREFIX]/share/icons/hicolor/scalable/apps
 INSTALLS += icon
 #debian
 DEB_INSTALL_LIST = .$$[QT_INSTALL_LIBS]/libQt*AV.so.*
@@ -664,3 +664,36 @@ MODULE_VERSION = $$VERSION
 # windows: Qt5AV.dll, not Qt1AV.dll
 !mac_framework: MODULE_VERSION = $${QT_MAJOR_VERSION}.$${QT_MINOR_VERSION}.$${QT_PATCH_VERSION}
 !contains(QMAKE_HOST.os, Windows):include($$PROJECTROOT/deploy.pri)
+
+
+SOURCES += \
+    ../qml/plugin.cpp \
+    ../qml/QQuickItemRenderer.cpp \
+    ../qml/SGVideoNode.cpp \
+    ../qml/QmlAVPlayer.cpp \
+    ../qml/QuickFilter.cpp \
+    ../qml/QuickSubtitle.cpp \
+    ../qml/MediaMetaData.cpp \
+    ../qml/QuickSubtitleItem.cpp \
+    ../qml/QuickVideoPreview.cpp
+
+HEADERS += \
+    ../qml/QmlAV/QuickSubtitle.h \
+    ../qml/QmlAV/QuickSubtitleItem.h \
+    ../qml/QmlAV/QuickVideoPreview.h \
+    ../qml/QmlAV/QmlAVPlayer.h \
+    ../qml/QmlAV/Export.h \
+    ../qml/QmlAV/MediaMetaData.h \
+    ../qml/QmlAV/QQuickItemRenderer.h \
+    ../qml/QmlAV/QuickFilter.h \
+    ../qml/QmlAV/SGVideoNode.h \
+
+greaterThan(QT_MINOR_VERSION, 1) {
+  HEADERS += ../qml/QmlAV/QuickFBORenderer.h
+  SOURCES += ../qml/QuickFBORenderer.cpp
+}
+
+INCLUDEPATH += $$PWD/../qml
+DEPENDPATH += $$PWD/../qml
+INCLUDEPATH += $$PWD/../qml/QmlAV
+DEPENDPATH += $$PWD/../qml/QmlAV

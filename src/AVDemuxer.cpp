@@ -213,7 +213,9 @@ public:
         , seek_type(AccurateSeek)
         , dict(0)
         , interrupt_hanlder(0)
-    {}
+    {
+        lastKeyFrame.data = nullptr;
+    }
     ~Private() {
         delete interrupt_hanlder;
         if (dict) {
@@ -326,9 +328,14 @@ public:
     std::map<QString,int64_t> videoFirstPts;
     std::map<QString,int64_t> audioFirstPts;
     std::map<QString,QElapsedTimer> elapsed;
+    std::map<QString,quint64> recordPacketCount;
+    std::map<QString,quint64> recordTryCount;
+    std::map<QString,QString> recordFormat;
     std::map<QString,int> records; // <path, duration>
     std::map<QString,bool> restream;
     QMutex recordMutex;
+    AVPacket lastKeyFrame;
+    QList<AVPacket> lastNonKeyFrames;
 
     qint64 lastPts = -1;
     qreal averagePtsDiff = 0;
@@ -503,7 +510,7 @@ bool AVDemuxer::readFrame()
     }
 
     if(resetValues.load()) {
-        this->lock.lockForWrite();
+        mutex.lock();
         totalBandwidth = 0;
         totalVideoBandwidth = 0;
         totalAudioBandwidth = 0;
@@ -514,20 +521,19 @@ bool AVDemuxer::readFrame()
         totalAudioPackets = 0;
         lostFrames = 0;
         d->averagePtsDiff = 0;
-        this->lock.unlock();
+        mutex.unlock();
         resetValues.store(false);
     }
 
     auto packetSize = d->calculatePacketSize(&packet);
 
-    this->lock.lockForWrite();
+    mutex.lock();
     totalBandwidth+=static_cast<quint64>(packetSize);
     totalPackets++;
-    isReceiving.store(true);
-    this->lock.unlock();
+    mutex.unlock();
     if( packet.stream_index==videoStream())
     {
-        this->lock.lockForWrite();
+        mutex.lock();
         totalVideoBandwidth+=static_cast<quint64>(packetSize);
         totalVideoPackets++;
 
@@ -545,16 +551,16 @@ bool AVDemuxer::readFrame()
             else
                 d->averagePtsDiff += static_cast<double>(ptsDiff-d->averagePtsDiff)/totalVideoPackets;
         }
-        this->lock.unlock();
+        mutex.unlock();
 
         d->lastPts = packet.pts;
     }
     else if( packet.stream_index==audioStream() || packet.stream_index==audioStreamIndex)
     {
-        this->lock.lockForWrite();
+        mutex.lock();
         totalAudioBandwidth+=static_cast<quint64>(packetSize);
         totalAudioPackets++;
-        this->lock.unlock();
+        mutex.unlock();
     }
 
     d->recordMutex.lock();
@@ -566,6 +572,9 @@ bool AVDemuxer::readFrame()
                 d->ostreamAudio.insert({k, nullptr});
                 d->restream.insert({k, (QUrl(k).scheme().toLower()=="udp")});
                 d->elapsed.insert({k, QElapsedTimer{}});
+                d->recordPacketCount.insert({k, 0});
+                d->recordTryCount.insert({k, 0});
+                d->recordFormat.insert({k,videoStream()>=0 ?"mkv":"wav"});
                 d->videoFirstPts.insert({k, -1});
                 d->audioFirstPts.insert({k, -1});
             }
@@ -573,12 +582,15 @@ bool AVDemuxer::readFrame()
             auto k = it->first;
             if(d->records.find(k)==d->records.end()) {
                 if(d->ostreamVideo[k] != nullptr || d->ostreamAudio[k] != nullptr) {
-                    av_write_trailer(d->oc[k]);
+                    if(d->elapsed[k].isValid())
+                        av_write_trailer(d->oc[k]);
                     avio_close(d->oc[k]->pb);
                     d->oc[k]->pb = nullptr;
                 }
                 if(d->oc[k]!=nullptr)
                     avformat_free_context(d->oc[k]);
+
+                emit recordFinished(true, d->recordFormat[k]);
 
                 d->ostreamVideo.erase(k);
                 d->ostreamAudio.erase(k);
@@ -586,6 +598,9 @@ bool AVDemuxer::readFrame()
                 d->audioFirstPts.erase(k);
                 d->restream.erase(k);
                 d->elapsed.erase(k);
+                d->recordPacketCount.erase(k);
+                d->recordTryCount.erase(k);
+                d->recordFormat.erase(k);
                 it = d->oc.erase(it);
             }
             else
@@ -596,14 +611,36 @@ bool AVDemuxer::readFrame()
 
     for(const auto& [k,v]: d->oc) {
         if(!d->elapsed[k].isValid()){
+            if(!d->restream[k] && d->recordTryCount[k]>20) {
+                if(d->oc[k]!=nullptr)
+                    avformat_free_context(d->oc[k]);
+                d->oc[k] = nullptr;
+                d->ostreamVideo[k] = nullptr;
+                d->ostreamAudio[k] = nullptr;
+                if(d->recordFormat[k]=="mkv")
+                    d->recordFormat[k]="mp4";
+                else if(d->recordFormat[k]=="mp4")
+                    d->recordFormat[k]="avi";
+                else if(d->recordFormat[k]=="avi")
+                    d->recordFormat[k]="mov";
+                else if(d->recordFormat[k]=="mov")
+                    d->recordFormat[k]="flv";
+                else {
+                    emit recordFinished(false, "");
+                    d->recordMutex.lock();
+                    stopRecording(k);
+                    d->recordMutex.unlock();
+                }
+                d->recordTryCount[k] = 0;
+            }
             if(d->oc[k]==nullptr) {
                 auto ret = -1;
                 if(d->restream[k])
-                    ret = avformat_alloc_output_context2(&d->oc[k],nullptr,d->format_ctx->iformat->name,nullptr);
+                    ret = avformat_alloc_output_context2(&d->oc[k],nullptr,/*d->format_ctx->iformat->name*/"mpegts",nullptr);
                 else
-                    ret = avformat_alloc_output_context2(&d->oc[k],nullptr,nullptr,k.toLatin1());
+                    ret = avformat_alloc_output_context2(&d->oc[k],nullptr,nullptr,(k+"."+d->recordFormat[k]).toLatin1());
                 if(ret>=0 && d->oc[k]!=nullptr && !(d->oc[k]->oformat->flags & AVFMT_NOFILE))
-                    avio_open(&d->oc[k]->pb, k.toLatin1(), AVIO_FLAG_WRITE);
+                    avio_open(&d->oc[k]->pb, (k+(d->restream[k] ? "" : "."+d->recordFormat[k])).toLatin1(), AVIO_FLAG_WRITE);
             }
             if(d->oc[k]!=nullptr && d->ostreamVideo[k] == nullptr && videoStream()>=0) {
                 d->ostreamVideo[k] = avformat_new_stream(d->oc[k], nullptr);
@@ -626,33 +663,57 @@ bool AVDemuxer::readFrame()
                 if(ret>=0)
                     d->elapsed[k].start();
             }
+            if(!d->elapsed[k].isValid())
+                ++(d->recordTryCount[k]);
         }
         auto & is = d->format_ctx->streams[packet.stream_index];
         auto & os = packet.stream_index==videoStream() ? d->ostreamVideo[k] : d->ostreamAudio[k];
         if(os != nullptr && d->elapsed[k].isValid()){
-            auto t1 = packet.pts;
-            auto t2 = packet.dts;
-            auto t3 = packet.duration;
-            if(packet.pts!=AV_NOPTS_VALUE) {
-                av_packet_rescale_ts(&packet, is->time_base, os->time_base);
-                if(packet.stream_index==videoStream()) {
-                    if(d->videoFirstPts[k]<0)
-                        d->videoFirstPts[k] = packet.pts;
-                    packet.pts -= d->videoFirstPts[k];
-                }
-                else {
-                    if(d->audioFirstPts[k]<0)
-                        d->audioFirstPts[k] = packet.pts;
-                    packet.pts -= d->audioFirstPts[k];
+            QList<AVPacket> packets = {packet};
+            auto writePrevFrames = d->recordPacketCount[k]==0 && !(packet.flags & AV_PKT_FLAG_KEY) && d->lastKeyFrame.data!=nullptr;
+            if(writePrevFrames) {
+                packets = {d->lastKeyFrame};
+                packets.append(d->lastNonKeyFrames);
+                packets.append(packet);
+                auto i = 0;
+                for(auto& p: packets) {
+                    if(i<packets.length()-1) {
+                        p.pts = AV_NOPTS_VALUE;
+                        p.dts = AV_NOPTS_VALUE;
+                        p.duration = 0;
+                    }
+                    ++i;
                 }
             }
-            else
-                packet.pts = av_rescale_q(d->elapsed[k].nsecsElapsed(), {1,1000000000} , os->time_base);
-            packet.dts = AV_NOPTS_VALUE;
-            av_write_frame(d->oc[k],&packet);
-            packet.pts = t1;
-            packet.dts = t2;
-            packet.duration = t3;
+            for(auto & p: packets) {
+                auto t1 = p.pts;
+                auto t2 = p.dts;
+                auto t3 = p.duration;
+                if(p.pts!=AV_NOPTS_VALUE) {
+                    av_packet_rescale_ts(&p, is->time_base, os->time_base);
+                    if(p.stream_index==videoStream()) {
+                        if(d->videoFirstPts[k]<0)
+                            d->videoFirstPts[k] = p.pts;
+                        p.pts -= d->videoFirstPts[k];
+                    }
+                    else {
+                        if(d->audioFirstPts[k]<0)
+                            d->audioFirstPts[k] = p.pts;
+                        p.pts -= d->audioFirstPts[k];
+                    }
+                }
+                else {
+                    auto elapsed = writePrevFrames ? 0 : d->elapsed[k].nsecsElapsed();
+                    p.pts = av_rescale_q(elapsed, {1,1000000000} , os->time_base);
+                    p.duration = 0;
+                }
+                p.dts = AV_NOPTS_VALUE;
+                av_write_frame(d->oc[k],&p);
+                p.pts = t1;
+                p.dts = t2;
+                p.duration = t3;
+                ++(d->recordPacketCount[k]);
+            }
         }
         d->recordMutex.lock();
         auto stop = (d->records[k]>0 && (d->elapsed[k].elapsed()/1000)>=d->records[k]);
@@ -664,13 +725,13 @@ bool AVDemuxer::readFrame()
     d->stream = packet.stream_index;
     //check whether the 1st frame is alreay got. emit only once
     if (!d->started) {
-        this->lock.lockForWrite();
+        mutex.lock();
         if(d->format_ctx && d->format_ctx->iformat && d->format_ctx->iformat->name) {
             containerFormat =  d->format_ctx->iformat->name;
         }
         else
             containerFormat = "";
-        this->lock.unlock();
+        mutex.unlock();
 
         d->started = true;
         Q_EMIT started();
@@ -682,7 +743,20 @@ bool AVDemuxer::readFrame()
     }
     // TODO: v4l2 copy
     d->pkt = Packet::fromAVPacket(&packet, av_q2d(d->format_ctx->streams[d->stream]->time_base));
-    av_packet_unref(&packet); //important!
+    if(packet.flags & AV_PKT_FLAG_KEY) {
+        if(d->lastKeyFrame.data!=nullptr) {
+            av_packet_unref(&d->lastKeyFrame);
+            for(auto& p: d->lastNonKeyFrames)
+                av_packet_unref(&p);
+            d->lastNonKeyFrames.clear();
+        }
+        d->lastKeyFrame = packet;
+    }
+    else if(d->lastKeyFrame.data!=nullptr) {
+        d->lastNonKeyFrames.append(packet);
+    }
+    else
+        av_packet_unref(&packet); //important!
     d->eof = false;
     if (d->pkt.pts > qreal(duration())/1000.0) {
         d->max_pts = d->pkt.pts;

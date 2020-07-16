@@ -26,6 +26,7 @@
 #include <QtCore/QByteArray>
 #include <QtCore/QRect>
 #include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
 /*
  * QPainterFilterContext, D2DFilterContext, ...
  */
@@ -38,7 +39,7 @@ QT_END_NAMESPACE
 namespace QtAV {
 
 class VideoFrame;
-class Q_AV_EXPORT VideoFilterContext
+class  VideoFilterContext
 {
 public:
     enum Type { ////audio and video...
@@ -99,7 +100,7 @@ protected:
 
 class VideoFrameConverter;
 //TODO: font, pen, brush etc?
-class Q_AV_EXPORT QPainterFilterContext Q_DECL_FINAL: public VideoFilterContext
+class  QPainterFilterContext Q_DECL_FINAL: public VideoFilterContext
 {
 public:
     QPainterFilterContext();
@@ -123,7 +124,7 @@ protected:
 };
 
 #if QTAV_HAVE(X11)
-class Q_AV_EXPORT X11FilterContext Q_DECL_FINAL: public VideoFilterContext
+class  X11FilterContext Q_DECL_FINAL: public VideoFilterContext
 {
 public:
     typedef struct _XDisplay Display;

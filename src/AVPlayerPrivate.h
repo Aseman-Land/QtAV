@@ -103,10 +103,6 @@ public:
         }
     }
 
-    void applyAdaptiveBuffer();
-
-    void applyAutoPlay(bool autoPlay);
-
     bool calcRates();
 
     void initMediaData();
@@ -126,6 +122,8 @@ public:
     bool reset_state;
     qint64 start_position, stop_position;
     qint64 start_position_norm, stop_position_norm; // real position
+    qint64 last_known_good_pts;
+    bool was_stepping;
     int repeat_max, repeat_current;
     int timer_id; //notify position change and check AB repeat range. active when playing
 
@@ -173,16 +171,7 @@ public:
 
     AVPlayer * q;
 
-    bool adaptive_buffer;
-    QTimer adaptiveBuffer_timer;
-
-    QTimer autoPlay_timer;
-    bool autoPlay = false;
-    QString autoPlayMode = "check";
-    QElapsedTimer autoPlayElapsedTimer;
-    int disconnectTimeout = 5000;
-    int autoPlayInterval = 5000;
-    int autoPlayCheckInterval = 1000;
+    int disconnectTimeout = 5;
 
     QElapsedTimer elapsedTimer;
     QElapsedTimer totalElapsedTimer;
@@ -190,6 +179,9 @@ public:
     quint64 lastTotalVideoBandwidth = 0;
     quint64 lastTotalAudioBandwidth = 0;
     qint64 lastTotalFrames = 0;
+
+    bool receivingFrames = false;
+    int checkReceivingCounter = 0;
 
     QTimer mediaDataTimer;
     QVariantMap mediaData;

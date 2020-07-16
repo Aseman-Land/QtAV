@@ -1,4 +1,4 @@
-import QtQuick.tooling 1.1
+﻿import QtQuick.tooling 1.1
 
 // This file describes the plugin-supplied types contained in the library.
 // It is used for QML tooling purposes only.
@@ -173,7 +173,8 @@ Module {
                 "Buffering": 5,
                 "Buffered": 6,
                 "EndOfMedia": 7,
-                "InvalidMedia": 8
+                "InvalidMedia": 8,
+                "PausedOnMediaAtEnd": 9
             }
         }
         Enum {
@@ -202,6 +203,14 @@ Module {
             }
         }
         Enum {
+            name: "MediaEndAction"
+            values: {
+                "MediaEndAction_Default": 0,
+                "MediaEndAction_KeepDisplay": 1,
+                "MediaEndAction_Pause": 2
+            }
+        }
+        Enum {
             name: "ChannelLayout"
             values: {
                 "ChannelLayoutAuto": 0,
@@ -220,8 +229,8 @@ Module {
         Property { name: "hasAudio"; type: "bool"; isReadonly: true }
         Property { name: "hasVideo"; type: "bool"; isReadonly: true }
         Property { name: "playbackState"; type: "PlaybackState"; isReadonly: true }
-        Property { name: "autoPlay"; type: "bool" }
         Property { name: "autoLoad"; type: "bool" }
+        Property { name: "mediaEndAction"; type: "MediaEndAction" }
         Property { name: "playbackRate"; type: "double" }
         Property { name: "source"; type: "QUrl" }
         Property { name: "loops"; type: "int" }
@@ -247,12 +256,10 @@ Module {
         Property { name: "audioTrack"; type: "int" }
         Property { name: "buffered"; type: "int" }
         Property { name: "bufferSize"; type: "int" }
-        Property { name: "adaptiveBuffer"; type: "bool" }
         Property { name: "mediaData"; type: "QVariantMap" }
         Property { name: "mediaDataTimerInterval"; type: "int" }
         Property { name: "disconnectTimeout"; type: "int" }
-        Property { name: "autoPlayInterval"; type: "int" }
-        Property { name: "displayFrameRate"; type: "double" }
+        Property { name: "receivingFrames"; type: "bool" }
         Property { name: "externalAudio"; type: "QUrl" }
         Property { name: "internalAudioTracks"; type: "QVariantList"; isReadonly: true }
         Property { name: "externalAudioTracks"; type: "QVariantList"; isReadonly: true }
@@ -262,6 +269,7 @@ Module {
         Property { name: "videoFilters"; type: "QuickVideoFilter"; isList: true; isReadonly: true }
         Property { name: "audioBackends"; type: "QStringList" }
         Property { name: "supportedAudioBackends"; type: "QStringList"; isReadonly: true }
+        Property { name: "notifyInterval"; type: "int" }
         Signal { name: "loopCountChanged" }
         Signal { name: "videoOutChanged" }
         Signal { name: "paused" }
@@ -295,6 +303,11 @@ Module {
         }
         Method { name: "stopRecording" }
         Method { name: "resetMediaData" }
+        Signal {
+            name: "recordFinished"
+            Parameter { name: "success"; type: "bool" }
+            Parameter { name: "format"; type: "string" }
+        }
     }
     Component { name: "QtAV::AudioFilter"; prototype: "QtAV::Filter" }
     Component {
@@ -617,13 +630,6 @@ Module {
         Signal {
             name: "imageReady"
             Parameter { name: "image"; type: "QImage" }
-        }
-        Signal {
-            name: "frameReady"
-            Parameter { name: "frameHeight"; type: "int" }
-            Parameter { name: "frameWidth"; type: "int" }
-            Parameter { name: "frameData"; type: "QByteArray" }
-            Parameter { name: "bytesPerLine"; type: "int" }
         }
     }
 }

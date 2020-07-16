@@ -1,4 +1,5 @@
 TEMPLATE = lib
+CONFIG += staticlib
 MODULE_INCNAME = QtAVWidgets # for mac framework. also used in install_sdk.pro
 TARGET = QtAVWidgets
 QT += gui
@@ -14,7 +15,7 @@ greaterThan(QT_MAJOR_VERSION, 4) {
 }
 CONFIG *= qtavwidgets-buildlib
 
-include(../runSdkInstall.pri)
+#include(../runSdkInstall.pri)
 
 INCLUDEPATH += $$[QT_INSTALL_HEADERS]
 #release: DEFINES += QT_NO_DEBUG_OUTPUT
@@ -26,9 +27,9 @@ preparePaths($$OUT_PWD/../out)
 
 !rc_file {
     RC_ICONS = $$PROJECTROOT/src/QtAV.ico
-    QMAKE_TARGET_COMPANY = "Shanghai University->S3 Graphics->Deepin | wbsecg1@gmail.com"
+    QMAKE_TARGET_COMPANY = "wbsecg1@gmail.com"
     QMAKE_TARGET_DESCRIPTION = "QtAVWidgets module. QtAV Multimedia framework. http://qtav.org"
-    QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2017 WangBin, wbsecg1@gmail.com"
+    QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2012-2019 WangBin, wbsecg1@gmail.com"
     QMAKE_TARGET_PRODUCT = "QtAV Widgets"
 } else:win32 {
     RC_FILE = QtAVWidgets.rc
