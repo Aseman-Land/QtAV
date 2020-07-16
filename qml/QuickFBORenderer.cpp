@@ -28,6 +28,7 @@
 #include "QtAV/private/factory.h"
 #include <QtCore/QCoreApplication>
 #include <QtGui/QOpenGLFunctions>
+#include <QPointer>
 #include <QtGui/QOpenGLFramebufferObject>
 #include <QtQuick/QQuickWindow>
 // for dynamicgl. qglfunctions before qt5.3 does not have portable gl functions
@@ -48,18 +49,18 @@ class FBORenderer : public QQuickFramebufferObject::Renderer
 public:
     FBORenderer(QuickFBORenderer* item) : m_item(item) {}
     QOpenGLFramebufferObject* createFramebufferObject(const QSize &size) Q_DECL_OVERRIDE {
-        m_item->fboSizeChanged(size);
+        if (m_item) m_item->fboSizeChanged(size);
         return QQuickFramebufferObject::Renderer::createFramebufferObject(size);
     }
     void render() Q_DECL_OVERRIDE {
         Q_ASSERT(m_item);
-        m_item->renderToFbo(framebufferObject());
+        if (m_item) m_item->renderToFbo(framebufferObject());
     }
     void synchronize(QQuickFramebufferObject *item) Q_DECL_OVERRIDE {
         m_item = static_cast<QuickFBORenderer*>(item);
     }
 private:
-    QuickFBORenderer *m_item;
+    QPointer<QuickFBORenderer> m_item;
 };
 
 class QuickFBORendererPrivate : public VideoRendererPrivate
